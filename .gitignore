@@ -1,0 +1,51 @@
+# 🔹 Python Compiled Files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# 🔹 Virtual Environments
+venv/
+env/
+*.env
+*.venv
+Pipfile
+Pipfile.lock
+
+# 🔹 Logs & Debugging Files
+*.log
+*.out
+*.err
+
+# 🔹 Build & Distribution Files
+dist/
+build/
+*.egg-info/
+*.whl
+
+# 🔹 Editor & IDE Specific Files
+.vscode/
+.idea/
+*.sublime-workspace
+
+# 🔹 OS & Miscellaneous Files
+.DS_Store
+Thumbs.db
+*.swp
+
+# 🔹 Jupyter Notebook Checkpoints (if using Jupyter)
+.ipynb_checkpoints/
+
+# 🔹 Coverage Reports (if using coverage.py)
+.coverage
+htmlcov/
+*.cover
+
+# 🔹 Test Reports (if using pytest)
+.pytest_cache/
+
+# 🔹 GitHub Actions Workflows (if applicable)
+.github/workflows/*.log
+
+# 🔹 Ignore Private Keys (if any, never commit secrets!)
+*.pem
+*.key
