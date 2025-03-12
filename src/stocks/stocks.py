@@ -36,10 +36,16 @@ class Stocks:
         ''')
         self.db_connection.commit()
 
-    def add_ticker(self, ticker):
+    def add_ticker(self, ticker, start_date=None, end_date=None):
         """
         Adds a ticker to the database if it doesn't already exist.
-        Then refreshes data for that ticker.
+        Then refreshes data for that ticker for the specified date range.
+        
+        Parameters:
+        ticker (str): The ticker symbol to add
+        start_date (str or datetime, optional): Start date in format 'YYYY-MM-DD'. If None, 
+                                               uses most recent data in DB or 10 years ago
+        end_date (str or datetime, optional): End date in format 'YYYY-MM-DD'. If None, uses today's date
         """
         cursor = self.db_connection.cursor()
         
@@ -52,8 +58,8 @@ class Stocks:
                 cursor.execute('INSERT INTO tickers (ticker) VALUES (?)', (ticker,))
                 self.db_connection.commit()
                 print(f"Added ticker: {ticker}")
-                # Only refresh data for newly added tickers
-                self.refresh_data_for_ticker(ticker)
+                # Only refresh data for newly added tickers, passing along date parameters
+                self.refresh_data_for_ticker(ticker, start_date, end_date)
             except Exception as e:
                 self.db_connection.rollback()
                 print(f"Error adding ticker {ticker}: {e}")
@@ -66,82 +72,27 @@ class Stocks:
         cursor.execute('DELETE FROM ticker_data WHERE ticker = ?', (ticker,))
         self.db_connection.commit()
 
-    def refresh_data(self):
+    def refresh_data(self, start_date=None, end_date=None):
         """
         Refreshes stock data for all tickers in the database.
-        For existing tickers, fetches data since the most recent date in database.
-        For new tickers, fetches up to 10 years of historical data.
+        
+        Parameters:
+        start_date (str or datetime, optional): Start date in format 'YYYY-MM-DD'. If None, 
+                                               uses most recent data in DB or 10 years ago
+        end_date (str or datetime, optional): End date in format 'YYYY-MM-DD'. If None, uses today's date
         """
-        import yfinance as yf
-        import pandas as pd
-        from datetime import datetime, timedelta
-
         cursor = self.db_connection.cursor()
         # Get all tickers from the database
         cursor.execute('SELECT ticker FROM tickers')
         tickers = [row[0] for row in cursor.fetchall()]
         
         if not tickers:
+            print("No tickers found in database")
             return  # No tickers to refresh
         
-        today = datetime.now().date()
-        
+        print(f"Refreshing data for {len(tickers)} tickers...")
         for ticker in tickers:
-            # Find the most recent data point for this ticker
-            cursor.execute(
-                'SELECT MAX(date) FROM ticker_data WHERE ticker = ?', 
-                (ticker,)
-            )
-            last_date_row = cursor.fetchone()
-            last_date = last_date_row[0]
-            
-            start_date = None
-            if last_date is None:
-                # No existing data for this ticker, get 10 years of history
-                start_date = (today - timedelta(days=10)).strftime('%Y-%m-%d')
-            else:
-                # Get data since the last recorded date (add 1 day to avoid duplication)
-                from datetime import datetime
-                last_date = datetime.strptime(last_date, '%Y-%m-%d').date()
-                start_date = (last_date + timedelta(days=1)).strftime('%Y-%m-%d')
-                
-                # If last date is today or in future, skip this ticker
-                if last_date >= today:
-                    continue
-                    
-            # Fetch data from Yahoo Finance
-            try:
-                ticker_obj = yf.Ticker(ticker)
-                df = ticker_obj.history(start=start_date, end=today.strftime('%Y-%m-%d'))
-                
-                if df.empty:
-                    continue
-                    
-                # Prepare and insert data
-                for index, row in df.iterrows():
-                    date = index.strftime('%Y-%m-%d')
-                    cursor.execute('''
-                        INSERT OR REPLACE INTO ticker_data 
-                        (ticker, date, open, high, low, close, volume, dividends, stocksplits) 
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    ''', (
-                        ticker,
-                        date,
-                        row['Open'],
-                        row['High'],
-                        row['Low'],
-                        row['Close'],
-                        row['Volume'],
-                        row.get('Dividends', 0),
-                        row.get('Stock Splits', 0)
-                    ))
-                
-                self.db_connection.commit()
-                
-            except Exception as e:
-                print(f"Error fetching data for {ticker}: {e}")
-                # Continue with the next ticker rather than failing completely
-                continue
+            self.refresh_data_for_ticker(ticker, start_date, end_date)
 
     def refresh_news(self):
         """
@@ -164,7 +115,7 @@ class Stocks:
         for ticker in tickers:
             try:
                 ticker_obj = yf.Ticker(ticker)
-                news_items = ticker_obj.get_news(count=10)
+                news_items = ticker_obj.get_news(count=1000)
                 
                 if not news_items:
                     continue
@@ -211,11 +162,56 @@ class Stocks:
         cursor.execute('SELECT ticker FROM tickers')
         return [row[0] for row in cursor.fetchall()]
 
-    def get_ticker_data(self, ticker):
-        """Return all data for a specific ticker"""
+    def get_ticker_data(self, ticker, start_date=None, end_date=None):
+        """
+        Return data for a specific ticker, optionally filtered by date range.
+        
+        Parameters:
+        ticker (str): The ticker symbol to get data for
+        start_date (str or datetime, optional): Start date in format 'YYYY-MM-DD'
+        end_date (str or datetime, optional): End date in format 'YYYY-MM-DD'
+        
+        Returns:
+        list: List of tuples containing ticker data ordered by date (descending)
+        """
+        from datetime import datetime
+        
         cursor = self.db_connection.cursor()
-        cursor.execute('SELECT * FROM ticker_data WHERE ticker = ? ORDER BY date DESC', (ticker,))
-        return cursor.fetchall()
+        
+        # Convert datetime objects to strings if necessary
+        if start_date and isinstance(start_date, datetime):
+            start_date = start_date.strftime('%Y-%m-%d')
+        
+        if end_date and isinstance(end_date, datetime):
+            end_date = end_date.strftime('%Y-%m-%d')
+        
+        # Build the query based on provided parameters
+        query = 'SELECT * FROM ticker_data WHERE ticker = ?'
+        params = [ticker]
+        
+        if start_date and end_date:
+            query += ' AND date BETWEEN ? AND ?'
+            params.extend([start_date, end_date])
+        elif start_date:
+            query += ' AND date >= ?'
+            params.append(start_date)
+        elif end_date:
+            query += ' AND date <= ?'
+            params.append(end_date)
+        
+        query += ' ORDER BY date DESC'
+        
+        # Execute the query with appropriate parameters
+        cursor.execute(query, params)
+        
+        result = cursor.fetchall()
+        
+        if not result:
+            print(f"No data found for ticker {ticker} in the specified date range")
+        else:
+            print(f"Retrieved {len(result)} data points for ticker {ticker}")
+
+        return result
 
     def get_ticker_news(self, ticker):
         """Return all news for a specific ticker"""
@@ -223,9 +219,15 @@ class Stocks:
         cursor.execute('SELECT * FROM ticker_news WHERE ticker = ? ORDER BY date DESC', (ticker,))
         return cursor.fetchall()
 
-    def refresh_data_for_ticker(self, ticker):
+    def refresh_data_for_ticker(self, ticker, start_date=None, end_date=None):
         """
         Refreshes stock data for a specific ticker.
+        
+        Parameters:
+        ticker (str): The ticker symbol to refresh data for
+        start_date (str or datetime, optional): Start date in format 'YYYY-MM-DD'. If None, 
+                                               uses most recent data in DB or 10 years ago
+        end_date (str or datetime, optional): End date in format 'YYYY-MM-DD'. If None, uses today's date
         """
         import yfinance as yf
         from datetime import datetime, timedelta
@@ -233,34 +235,44 @@ class Stocks:
         cursor = self.db_connection.cursor()
         today = datetime.now().date()
         
-        # Find the most recent data point for this ticker
-        cursor.execute(
-            'SELECT MAX(date) FROM ticker_data WHERE ticker = ?', 
-            (ticker,)
-        )
-        last_date_row = cursor.fetchone()
-        last_date = last_date_row[0]
-        
-        start_date = None
-        if last_date is None:
-            # No existing data for this ticker, get 10 years of history
-            start_date = (today - timedelta(days=10)).strftime('%Y-%m-%d')
-        else:
-            # Get data since the last recorded date (add 1 day to avoid duplication)
-            from datetime import datetime
-            last_date = datetime.strptime(last_date, '%Y-%m-%d').date()
-            start_date = (last_date + timedelta(days=1)).strftime('%Y-%m-%d')
+        # Set end_date if not provided
+        if end_date is None:
+            end_date = today.strftime('%Y-%m-%d')
+        elif isinstance(end_date, datetime):
+            end_date = end_date.strftime('%Y-%m-%d')
             
-            # If last date is today or in future, skip this ticker
-            if last_date >= today:
-                return
+        # If start_date is provided, use it directly
+        if start_date is not None:
+            if isinstance(start_date, datetime):
+                start_date = start_date.strftime('%Y-%m-%d')
+        else:
+            # Find the most recent data point for this ticker
+            cursor.execute(
+                'SELECT MAX(date) FROM ticker_data WHERE ticker = ?', 
+                (ticker,)
+            )
+            last_date_row = cursor.fetchone()
+            last_date = last_date_row[0]
+            
+            if last_date is None:
+                # No existing data for this ticker, get 10 years of history
+                start_date = (today - timedelta(days=365*10)).strftime('%Y-%m-%d')
+            else:
+                # Get data since the last recorded date (add 1 day to avoid duplication)
+                last_date = datetime.strptime(last_date, '%Y-%m-%d').date()
+                start_date = (last_date + timedelta(days=1)).strftime('%Y-%m-%d')
+                
+                # If last date is at or after end_date, nothing to do
+                if last_date >= datetime.strptime(end_date, '%Y-%m-%d').date():
+                    return
                     
         # Fetch data from Yahoo Finance
         try:
             ticker_obj = yf.Ticker(ticker)
-            df = ticker_obj.history(start=start_date, end=today.strftime('%Y-%m-%d'))
+            df = ticker_obj.history(start=start_date, end=end_date)
             
             if df.empty:
+                print(f"No data found for {ticker} between {start_date} and {end_date}")
                 return
                 
             # Prepare and insert data
@@ -283,6 +295,7 @@ class Stocks:
                 ))
             
             self.db_connection.commit()
+            print(f"Refreshed {len(df)} data points for {ticker} from {start_date} to {end_date}")
             
         except Exception as e:
             print(f"Error fetching data for {ticker}: {e}")
