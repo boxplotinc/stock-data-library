@@ -3,7 +3,7 @@ from setuptools import setup, find_packages
 setup(
     name='stock-data-library',
     version='0.1.0',
-    author='Your Name',
+    author='Boxplot Inc.',
     author_email='your.email@example.com',
     description='A library for managing stock data using SQLite and Yahoo Finance.',
     packages=find_packages(where='src'),
@@ -11,7 +11,6 @@ setup(
     install_requires=[
         'yfinance',  # Yahoo Finance library
         'pandas',    # For data manipulation
-        'sqlite3',   # SQLite database support
     ],
     classifiers=[
         'Programming Language :: Python :: 3',
