@@ -1,13 +1,15 @@
 # Stock Data Library
 
 ## Overview
-The Stock Data Library is a Python library designed to manage stock data using a SQLite database. It allows users to add and remove stock tickers, refresh stock data from Yahoo Finance, and fetch related news articles. The library is structured to facilitate easy integration and usage in various applications.
+The Stock Data Library is a Python library designed to manage stock data using a SQLite database. It allows users to add and remove stock tickers, refresh stock data from Yahoo Finance, and fetch related news articles. The library supports specifying date ranges for data retrieval and refreshing.
 
 ## Features
-- Manage stock tickers in a SQLite database.
-- Fetch and update stock data from Yahoo Finance.
-- Retrieve news articles related to stock tickers.
-- Handle duplicates in news data efficiently.
+- Manage stock tickers in a SQLite database
+- Fetch and update stock data from Yahoo Finance
+- Retrieve news articles related to stock tickers
+- Filter stock data by custom date ranges
+- Refresh data for specific historical periods
+- Handle duplicates in news data efficiently
 
 ## Installation
 To install the Stock Data Library, clone the repository and install the required packages:
