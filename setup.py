@@ -6,8 +6,8 @@ setup(
     author='Boxplot Inc.',
     author_email='your.email@example.com',
     description='A library for managing stock data using SQLite and Yahoo Finance.',
-    packages=find_packages(),
-    package_dir={'': 'src'},
+    packages=['stocks'],  # Explicitly define the package
+    package_dir={'stocks': 'src/stocks'},  # Map the package to the correct directory
     install_requires=[
         'yfinance',  # Yahoo Finance library
         'pandas',    # For data manipulation
@@ -19,5 +19,4 @@ setup(
         'Operating System :: OS Independent',
     ],
     python_requires='>=3.6',
-    include_package_data=False,
 )
