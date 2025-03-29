@@ -1,3 +1,12 @@
+import logging
+from datetime import datetime, timedelta
+from typing import List, Tuple, Union, Optional, Dict, Any
+
+# Import utils functions
+from .utils import format_date, parse_date, sanitize_input
+
+logger = logging.getLogger(__name__)
+
 class Stocks:
     def __init__(self, db_connection):
         self.db_connection = db_connection
@@ -47,24 +56,23 @@ class Stocks:
                                                uses most recent data in DB or 10 years ago
         end_date (str or datetime, optional): End date in format 'YYYY-MM-DD'. If None, uses today's date
         """
-        cursor = self.db_connection.cursor()
-        
-        # First check if ticker already exists
-        cursor.execute('SELECT 1 FROM tickers WHERE ticker = ?', (ticker,))
-        exists = cursor.fetchone() is not None
-        
-        if not exists:
-            try:
-                cursor.execute('INSERT INTO tickers (ticker) VALUES (?)', (ticker,))
-                self.db_connection.commit()
-                print(f"Added ticker: {ticker}")
-                # Only refresh data for newly added tickers, passing along date parameters
-                self.refresh_data_for_ticker(ticker, start_date, end_date)
-            except Exception as e:
-                self.db_connection.rollback()
-                print(f"Error adding ticker {ticker}: {e}")
-        else:
-            print(f"Ticker {ticker} already exists in database")
+        with self.db_connection:  # This automatically handles commit/rollback
+            cursor = self.db_connection.cursor()
+            
+            # First check if ticker already exists
+            cursor.execute('SELECT 1 FROM tickers WHERE ticker = ?', (ticker,))
+            exists = cursor.fetchone() is not None
+            
+            if not exists:
+                try:
+                    cursor.execute('INSERT INTO tickers (ticker) VALUES (?)', (ticker,))
+                    logger.info(f"Added ticker: {ticker}")
+                    # Only refresh data for newly added tickers, passing along date parameters
+                    self.refresh_data_for_ticker(ticker, start_date, end_date)
+                except Exception as e:
+                    logger.error(f"Error adding ticker {ticker}: {e}")
+            else:
+                print(f"Ticker {ticker} already exists in database")
 
     def remove_ticker(self, ticker):
         cursor = self.db_connection.cursor()
@@ -110,16 +118,20 @@ class Stocks:
         tickers = [row[0] for row in cursor.fetchall()]
         
         if not tickers:
+            logger.info("No tickers found for news refresh")
             return  # No tickers to refresh
         
+        news_count = 0
         for ticker in tickers:
             try:
                 ticker_obj = yf.Ticker(ticker)
                 news_items = ticker_obj.get_news(count=1000)
                 
                 if not news_items:
+                    logger.debug(f"No news found for {ticker}")
                     continue
-                    
+                
+                ticker_news_count = 0    
                 for item in news_items:
                     # Generate a unique ID for the news item if it doesn't have one
                     if 'id' in item:
@@ -130,7 +142,11 @@ class Stocks:
                     
                     # Convert timestamp to date
                     if 'pubDate' in item['content']:
-                        news_date = datetime.fromisoformat(item['content']['pubDate'].replace("Z", "+00:00"))
+                        try:
+                            news_date = datetime.fromisoformat(item['content']['pubDate'].replace("Z", "+00:00"))
+                            news_date = news_date.strftime('%Y-%m-%d')
+                        except (ValueError, TypeError):
+                            news_date = datetime.now().strftime('%Y-%m-%d')
                     else:
                         news_date = datetime.now().strftime('%Y-%m-%d')
 
@@ -139,9 +155,8 @@ class Stocks:
                     if not summary and 'title' in item['content']:
                         summary = item['content'].get('title')
                     
-                    # Simple sentiment analysis placeholder
-                    # In a real implementation, you would use a sentiment analysis library
-                    sentiment = 'neutral'
+                    # Use the analyze_sentiment function
+                    sentiment = analyze_sentiment(summary) if summary else 'neutral'
                     
                     # Insert or replace the news item
                     cursor.execute('''
@@ -149,41 +164,53 @@ class Stocks:
                         (ticker, date, news_id, news_summary, sentiment) 
                         VALUES (?, ?, ?, ?, ?)
                     ''', (ticker, news_date, news_id, summary, sentiment))
+                    ticker_news_count += 1
                 
                 self.db_connection.commit()
+                news_count += ticker_news_count
+                logger.info(f"Added/updated {ticker_news_count} news items for {ticker}")
                 
             except Exception as e:
-                print(f"Error fetching news for {ticker}: {e}")
+                logger.error(f"Error fetching news for {ticker}: {str(e)}")
                 continue
+        
+        logger.info(f"Total news items processed: {news_count}")
 
-    def get_all_tickers(self):
-        """Return a list of all tickers in the database"""
+    def get_all_tickers(self) -> List[str]:
+        """
+        Return a list of all tickers in the database
+        
+        Returns:
+            List[str]: List of ticker symbols
+        """
         cursor = self.db_connection.cursor()
         cursor.execute('SELECT ticker FROM tickers')
         return [row[0] for row in cursor.fetchall()]
 
-    def get_ticker_data(self, ticker, start_date=None, end_date=None):
+    def get_ticker_data(self, ticker: str, start_date: Optional[Union[str, datetime]] = None, 
+                        end_date: Optional[Union[str, datetime]] = None) -> List[Tuple]:
         """
         Return data for a specific ticker, optionally filtered by date range.
         
         Parameters:
-        ticker (str): The ticker symbol to get data for
-        start_date (str or datetime, optional): Start date in format 'YYYY-MM-DD'
-        end_date (str or datetime, optional): End date in format 'YYYY-MM-DD'
+            ticker (str): The ticker symbol to get data for
+            start_date (str or datetime, optional): Start date in format 'YYYY-MM-DD'
+            end_date (str or datetime, optional): End date in format 'YYYY-MM-DD'
         
         Returns:
-        list: List of tuples containing ticker data ordered by date (descending)
+            list: List of tuples containing ticker data ordered by date (descending)
         """
-        from datetime import datetime
-        
         cursor = self.db_connection.cursor()
+        
+        # Sanitize inputs
+        ticker = sanitize_input(ticker)
         
         # Convert datetime objects to strings if necessary
         if start_date and isinstance(start_date, datetime):
-            start_date = start_date.strftime('%Y-%m-%d')
+            start_date = format_date(start_date)
         
         if end_date and isinstance(end_date, datetime):
-            end_date = end_date.strftime('%Y-%m-%d')
+            end_date = format_date(end_date)
         
         # Build the query based on provided parameters
         query = 'SELECT * FROM ticker_data WHERE ticker = ?'
@@ -202,16 +229,19 @@ class Stocks:
         query += ' ORDER BY date DESC'
         
         # Execute the query with appropriate parameters
-        cursor.execute(query, params)
-        
-        result = cursor.fetchall()
-        
-        if not result:
-            print(f"No data found for ticker {ticker} in the specified date range")
-        else:
-            print(f"Retrieved {len(result)} data points for ticker {ticker}")
-
-        return result
+        try:
+            cursor.execute(query, params)
+            result = cursor.fetchall()
+            
+            if not result:
+                logger.info(f"No data found for ticker {ticker} in the specified date range")
+            else:
+                logger.info(f"Retrieved {len(result)} data points for ticker {ticker}")
+            
+            return result
+        except Exception as e:
+            logger.error(f"Error retrieving data for {ticker}: {str(e)}")
+            return []
 
     def get_ticker_news(self, ticker):
         """Return all news for a specific ticker"""
@@ -276,13 +306,10 @@ class Stocks:
                 return
                 
             # Prepare and insert data
+            data_to_insert = []
             for index, row in df.iterrows():
                 date = index.strftime('%Y-%m-%d')
-                cursor.execute('''
-                    INSERT OR REPLACE INTO ticker_data 
-                    (ticker, date, open, high, low, close, volume, dividends, stocksplits) 
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                ''', (
+                data_to_insert.append((
                     ticker,
                     date,
                     row['Open'],
@@ -294,8 +321,39 @@ class Stocks:
                     row.get('Stock Splits', 0)
                 ))
             
+            # Instead of committing after each insert
+            cursor.executemany('''
+                INSERT OR REPLACE INTO ticker_data 
+                (ticker, date, open, high, low, close, volume, dividends, stocksplits) 
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ''', data_to_insert)
             self.db_connection.commit()
             print(f"Refreshed {len(df)} data points for {ticker} from {start_date} to {end_date}")
             
         except Exception as e:
             print(f"Error fetching data for {ticker}: {e}")
+
+def analyze_sentiment(text):
+    """
+    Simple sentiment analysis using TextBlob.
+    
+    Parameters:
+        text (str): The text to analyze
+        
+    Returns:
+        str: Sentiment classification ('positive', 'negative', or 'neutral')
+    """
+    try:
+        from textblob import TextBlob
+        analysis = TextBlob(text)
+        # Determine if positive, negative, or neutral
+        polarity = analysis.sentiment.polarity
+        if polarity > 0.1:
+            return 'positive'
+        elif polarity < -0.1:
+            return 'negative'
+        else:
+            return 'neutral'
+    except Exception:
+        # In case TextBlob isn't installed or other errors
+        return 'neutral'
