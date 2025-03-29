@@ -1,13 +1,13 @@
 from setuptools import setup, find_packages
 
 setup(
-    name='stock-data-library',
+    name='stocks',
     version='0.1.0',
     author='Boxplot Inc.',
     author_email='your.email@example.com',
     description='A library for managing stock data using SQLite and Yahoo Finance.',
-    packages=['stocks'],  # Explicitly define the package
-    package_dir={'stocks': 'src/stocks'},  # Map the package to the correct directory
+    packages=find_packages(where='src'),  # Explicitly define the package
+    package_dir={'': 'src'},  # Map the package to the correct directory
     install_requires=[
         'yfinance',  # Yahoo Finance library
         'pandas',    # For data manipulation

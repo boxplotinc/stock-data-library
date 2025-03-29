@@ -1,6 +1,7 @@
 from src.stocks.stocks import Stocks
 from src.stocks.database import Database
 
+
 stocks_database = Database('stocks.db')
 stocks = Stocks(stocks_database.connection)
 
